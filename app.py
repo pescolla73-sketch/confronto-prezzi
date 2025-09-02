@@ -7,15 +7,16 @@ st.title("📊 Confronto Prezzi (Basato su Posizioni AZ, BA, O, Q)")
 
 # --- UI DI CARICAMENTO ---
 col1, col2 = st.columns(2)
-file_mio = col1.file_uploader("1️⃣ Carica il tuo file Movimenti", type=["xlsx", "xls"])
-file_fornitore = col2.file_uploader("2️⃣ Carica il file Breakdown del Fornitore", type=["xlsx", "xls"])
+file_mio = col1.file_uploader("1️⃣ Carica il tuo file Movimenti (.xls)", type=["xls"])
+file_fornitore = col2.file_uploader("2️⃣ Carica il file Breakdown del Fornitore (.xlsx)", type=["xlsx"])
 tolleranza = st.slider("Imposta la tolleranza (€)", 0.0, 1.0, 0.01, 0.01)
 
 # --- LOGICA DI CONFRONTO ---
 if file_mio and file_fornitore:
     try:
         with st.spinner("Elaborazione..."):
-            df_mio = pd.read_excel(file_mio, header=None) # Legge senza intestazione per usare gli indici
+            # Legge i file senza intestazione per usare gli indici di colonna
+            df_mio = pd.read_excel(file_mio, header=None)
             df_fornitore = pd.read_excel(file_fornitore, sheet_name="Orders", skiprows=10, header=None)
 
             # --- SELEZIONE COLONNE PER POSIZIONE ---
@@ -45,12 +46,12 @@ if file_mio and file_fornitore:
             # --- MERGE E CONFRONTO ---
             confronto_df = pd.merge(df_mio_subset, df_fornitore_subset, on="Numero Ordine", how="inner")
             
-            confronto_df['Differenza_1'] = (confronto_df['Prezzo_AZ_Mio'] - confronto_df['Prezzo_O_Fornitore']).abs()
-            confronto_df['Differenza_2'] = (confronto_df['Prezzo_BA_Mio'] - confronto_df['Prezzo_Q_Fornitore']).abs()
+            confronto_df['Differenza_AZ_vs_O'] = (confronto_df['Prezzo_AZ_Mio'] - confronto_df['Prezzo_O_Fornitore']).abs()
+            confronto_df['Differenza_BA_vs_Q'] = (confronto_df['Prezzo_BA_Mio'] - confronto_df['Prezzo_Q_Fornitore']).abs()
             
             incongruenze_df = confronto_df[
-                (confronto_df['Differenza_1'] > tolleranza) | 
-                (confronto_df['Differenza_2'] > tolleranza)
+                (confronto_df['Differenza_AZ_vs_O'] > tolleranza) | 
+                (confronto_df['Differenza_BA_vs_Q'] > tolleranza)
             ].copy()
 
         # --- VISUALIZZAZIONE RISULTATI ---
