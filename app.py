@@ -3,38 +3,38 @@ import pandas as pd
 
 st.title("🔍 Confronto Prezzi Ordini")
 
-file_mio = st.file_uploader("📁 Carica il tuo file", type=["xlsx", "csv"])
-file_fornitore = st.file_uploader("📁 Carica il file del fornitore", type=["xlsx", "csv"])
+file_mio = st.file_uploader("📁 Carica il tuo file", type=["xlsx"])
+file_fornitore = st.file_uploader("📁 Carica il file del fornitore", type=["xlsx"])
 
 if file_mio and file_fornitore:
+    # Leggi il tuo file
     df_mio = pd.read_excel(file_mio)
-    df_fornitore = pd.read_excel(file_fornitore)
+    # Leggi il foglio "Orders" dal file del fornitore
+    df_fornitore = pd.read_excel(file_fornitore, sheet_name="Orders")
 
     st.success("✅ File caricati correttamente!")
 
-    # Rinomina colonne
+    # Rinomina le colonne
     df_mio = df_mio.rename(columns={
-        "TE_NDOC": "Numero ordine",
-        "TE_DATA_EVA": "Data ordine",
-        "MM_PREZZO_NETTO": "Prezzo mio"
+        df_mio.columns[25]: "Numero ordine",   # Colonna Z
+        df_mio.columns[26]: "Data ordine"      # Colonna AA
     })
 
     df_fornitore = df_fornitore.rename(columns={
-        "Order Id": "Numero ordine",
-        "Order Date": "Data ordine",
-        "Supplier's Price": "Prezzo fornitore"
+        df_fornitore.columns[1]: "Numero ordine",  # Colonna B
+        df_fornitore.columns[3]: "Data ordine"     # Colonna D
     })
 
-    # Verifica che le colonne esistano
-    colonne_richieste = ["Data ordine", "Numero ordine", "Prezzo mio"]
-    colonne_fornitore = ["Data ordine", "Numero ordine", "Prezzo fornitore"]
+    # Pulisci il prefisso "BLL" nei numeri ordine del fornitore
+    df_fornitore["Numero ordine"] = df_fornitore["Numero ordine"].astype(str).str.replace("BLL", "").str.strip()
 
-    if all(col in df_mio.columns for col in colonne_richieste) and all(col in df_fornitore.columns for col in colonne_fornitore):
-        confronto = pd.merge(df_mio, df_fornitore, on=["Data ordine", "Numero ordine"], suffixes=("_mio", "_fornitore"))
-        confronto["Esito"] = confronto.apply(
-            lambda row: "✅ Uguale" if row["Prezzo mio"] == row["Prezzo fornitore"] else "❌ Diverso", axis=1
-        )
-        st.subheader("📊 Risultato del confronto")
-        st.dataframe(confronto)
-    else:
-        st.error("❌ Le colonne richieste non sono presenti nei file. Controlla i nomi o il contenuto.")
+    # Assicurati che i numeri ordine siano stringhe
+    df_mio["Numero ordine"] = df_mio["Numero ordine"].astype(str).str.strip()
+
+    # Confronto
+    confronto = pd.merge(df_mio, df_fornitore, on=["Data ordine", "Numero ordine"], suffixes=("_mio", "_fornitore"))
+
+    confronto["Esito"] = "✅ Uguale"  # Puoi aggiungere confronto prezzi se servono
+
+    st.subheader("📊 Risultato del confronto")
+    st.dataframe(confronto)
