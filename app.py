@@ -3,8 +3,8 @@ import pandas as pd
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Confronto Prezzi Excel", layout="wide")
-st.title("📊 Confronto Prezzi da File Excel (Versione Finale)")
-st.caption("Questa versione gestisce differenze di formato, caratteri invisibili e arrotondamenti.")
+st.title("📊 Confronto Prezzi (Basato su Posizioni di Colonna)")
+st.caption("Questa versione finale ignora le intestazioni problematiche e usa le posizioni delle colonne (AZ, BA, O, Q).")
 
 # --- UI DI CARICAMENTO ---
 col1, col2 = st.columns(2)
@@ -15,42 +15,52 @@ tolleranza = st.slider("Imposta la tolleranza per gli arrotondamenti (€)", 0.0
 # --- LOGICA DI CONFRONTO ---
 if file_mio and file_fornitore:
     try:
-        with st.spinner("Elaborazione dei file Excel..."):
-            df_mio = pd.read_excel(file_mio)
-            df_fornitore = pd.read_excel(file_fornitore, sheet_name="Orders", header=7)
+        with st.spinner("Elaborazione dei file..."):
+            # Legge i file SENZA intestazione per usare gli indici numerici delle colonne
+            df_mio = pd.read_excel(file_mio, header=None)
+            df_fornitore_raw = pd.read_excel(file_fornitore, sheet_name="Orders", header=None)
+
+            # Salta le prime 11 righe nel file del fornitore per arrivare ai dati veri e propri
+            df_fornitore = df_fornitore_raw.iloc[11:].copy()
+
 
         with st.spinner("Confronto in corso..."):
-            # --- SELEZIONE COLONNE PER NOME ---
-            cols_mio = {'TE_NDOC': 'Numero Ordine', 'MM_PREZZO_BASE': 'Prezzo_Base_Mio', 'MM_PREZZO_NETTO': 'Prezzo_Netto_Mio'}
-            df_mio_subset = df_mio[list(cols_mio.keys())].rename(columns=cols_mio)
+            # --- SELEZIONE COLONNE PER POSIZIONE (Indice parte da 0) ---
+            # Il tuo file: Z -> 25, AZ -> 51, BA -> 52
+            df_mio_subset = df_mio[[25, 51, 52]].copy()
+            df_mio_subset.columns = ['Numero Ordine', 'Prezzo_AZ_Mio', 'Prezzo_BA_Mio']
 
-            cols_fornitore = {'Order Id': 'Numero Ordine', 'Net Local Market Price': 'Prezzo_Base_Fornitore', "Supplier's Price ": 'Prezzo_Netto_Fornitore'}
-            df_fornitore_subset = df_fornitore[list(cols_fornitore.keys())].rename(columns=cols_fornitore)
+            # File fornitore: B -> 1, O -> 14, Q -> 16
+            df_fornitore_subset = df_fornitore[[1, 14, 16]].copy()
+            df_fornitore_subset.columns = ['Numero Ordine', 'Prezzo_O_Fornitore', 'Prezzo_Q_Fornitore']
 
-            # --- PULIZIA NUMERO ORDINE (Metodo di Estrazione Forzata) ---
+            # --- PULIZIA DATI ---
+            # Pulisce i numeri ordine estraendo solo la parte numerica
             df_mio_subset['Numero Ordine'] = df_mio_subset['Numero Ordine'].astype(str).str.extract(r'(\d+)').fillna('')
             df_fornitore_subset['Numero Ordine'] = df_fornitore_subset['Numero Ordine'].astype(str).str.extract(r'(\d+)').fillna('')
 
-            # --- PULIZIA PREZZI (con gestione virgola/punto) ---
-            for col in ['Prezzo_Base_Mio', 'Prezzo_Netto_Mio']:
+            # Pulisce i prezzi gestendo la virgola
+            for col in ['Prezzo_AZ_Mio', 'Prezzo_BA_Mio']:
                 prezzi = df_mio_subset[col].astype(str).str.replace(',', '.', regex=False)
                 df_mio_subset[col] = pd.to_numeric(prezzi, errors='coerce')
             
-            for col in ['Prezzo_Base_Fornitore', 'Prezzo_Netto_Fornitore']:
+            for col in ['Prezzo_O_Fornitore', 'Prezzo_Q_Fornitore']:
                 prezzi = df_fornitore_subset[col].astype(str).str.replace(',', '.', regex=False)
                 df_fornitore_subset[col] = pd.to_numeric(prezzi, errors='coerce')
 
+            # Rimuove le righe che non hanno potuto essere convertite correttamente
             df_mio_subset.dropna(inplace=True)
             df_fornitore_subset.dropna(inplace=True)
 
             # --- MERGE E CONFRONTO ---
             confronto_df = pd.merge(df_mio_subset, df_fornitore_subset, on="Numero Ordine", how="inner")
-            confronto_df['Differenza_Base'] = (confronto_df['Prezzo_Base_Mio'] - confronto_df['Prezzo_Base_Fornitore']).abs()
-            confronto_df['Differenza_Netto'] = (confronto_df['Prezzo_Netto_Mio'] - confronto_df['Prezzo_Netto_Fornitore']).abs()
+            
+            confronto_df['Differenza_AZ_vs_O'] = (confronto_df['Prezzo_AZ_Mio'] - confronto_df['Prezzo_O_Fornitore']).abs()
+            confronto_df['Differenza_BA_vs_Q'] = (confronto_df['Prezzo_BA_Mio'] - confronto_df['Prezzo_Q_Fornitore']).abs()
             
             incongruenze_df = confronto_df[
-                (confronto_df['Differenza_Base'] > tolleranza) | 
-                (confronto_df['Differenza_Netto'] > tolleranza)
+                (confronto_df['Differenza_AZ_vs_O'] > tolleranza) | 
+                (confronto_df['Differenza_BA_vs_Q'] > tolleranza)
             ].copy()
 
         # --- VISUALIZZAZIONE RISULTATI ---
@@ -65,4 +75,4 @@ if file_mio and file_fornitore:
         st.error("Si è verificato un errore.")
         st.exception(e)
 else:
-    st.info("⬆️ Carica entrambi i file Excel per avviare il confronto.")
+    st.info("⬆️ Carica entrambi i file per avviare il confronto.")
