@@ -3,8 +3,8 @@ import pandas as pd
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Confronto Prezzi Excel", layout="wide")
-st.title("📊 Confronto Dati Ordini (Versione Definitiva)")
-st.caption("Questo script segue le tue specifiche precise per colonne, righe e arrotondamenti.")
+st.title("📊 Confronto Automatico da File Originali")
+st.info("Carica i file .xls e .xlsx originali. Lo script eseguirà la pulizia e il confronto in automatico.")
 
 # --- UI DI CARICAMENTO ---
 col1, col2 = st.columns(2)
@@ -14,13 +14,13 @@ file_fornitore = col2.file_uploader("2️⃣ Carica il file Breakdown del Fornit
 # --- LOGICA DI CONFRONTO ---
 if file_mio and file_fornitore:
     try:
-        with st.spinner("Elaborazione dei file..."):
+        with st.spinner("Elaborazione e pulizia automatica dei file..."):
             # --- LETTURA FILE ---
             # Legge i file SENZA intestazione per poter usare gli indici e saltare le righe corrette
             df_mio_raw = pd.read_excel(file_mio, header=None)
             df_fornitore_raw = pd.read_excel(file_fornitore, sheet_name="Orders", header=None)
 
-            # Salta le righe iniziali per arrivare ai dati
+            # Salta le righe iniziali per arrivare ai dati, come da tue istruzioni
             df_mio = df_mio_raw.iloc[1:].copy() # I dati iniziano dalla riga 2 (indice 1)
             df_fornitore = df_fornitore_raw.iloc[11:].copy() # I dati iniziano dalla riga 12 (indice 11)
 
@@ -57,10 +57,10 @@ if file_mio and file_fornitore:
             df_fornitore_subset.dropna(inplace=True)
 
             # --- MERGE E CONFRONTO ---
-            # Unisce usando SIA Numero Ordine SIA Data Ordine
+            # Unisce usando SIA Numero Ordine SIA Data Ordine per la massima precisione
             confronto_df = pd.merge(df_mio_subset, df_fornitore_subset, on=["Numero Ordine", "Data Ordine"], how="inner")
             
-            # Confronta i prezzi già arrotondati
+            # Confronta i prezzi già arrotondati per trovare le differenze
             incongruenze_df = confronto_df[
                 (confronto_df['Prezzo_1_Mio'] != confronto_df['Prezzo_1_Fornitore']) | 
                 (confronto_df['Prezzo_2_Mio'] != confronto_df['Prezzo_2_Fornitore'])
@@ -75,7 +75,7 @@ if file_mio and file_fornitore:
             st.dataframe(incongruenze_df)
 
     except Exception as e:
-        st.error("Si è verificato un errore.")
+        st.error("Si è verificato un errore. Assicurati che le colonne nei file originali siano sempre nelle stesse posizioni.")
         st.exception(e)
 else:
-    st.info("⬆️ Carica entrambi i file per avviare il confronto.")
+    st.info("⬆️ Carica i due file Excel originali per avviare il confronto automatico.")
