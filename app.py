@@ -109,3 +109,108 @@ def normalize_supplier(df):
     return out[["order_id", "order_date", "price"]]
 
 def read_logistics(uploaded):
+    """
+    Legge il file di logistica (Excel o CSV) e restituisce un DF con colonne attese:
+    - MM_ORDINE_TAGLIA (ordine)
+    - TE_DATA         (data)
+    - MM_PREZZO_BASE  (prezzo)
+    """
+    name = uploaded.name if hasattr(uploaded, "name") else "file"
+    ext = Path(name).suffix.lower()
+    try:
+        if ext in [".xlsx", ".xls"]:
+            # prende il primo foglio
+            df = pd.read_excel(uploaded, dtype=str)
+        elif ext == ".csv":
+            df = pd.read_csv(uploaded, dtype=str, sep=None, engine="python")
+        else:
+            st.error("Il file LOGISTICA deve essere .xlsx/.xls/.csv")
+            return None
+    except Exception as e:
+        st.error(f"Errore leggendo '{name}': {e}")
+        return None
+
+    expected = ["MM_ORDINE_TAGLIA", "TE_DATA", "MM_PREZZO_BASE"]
+    missing = [c for c in expected if c not in df.columns]
+    if missing:
+        st.error(f"Mancano colonne nel file LOGISTICA: {missing}\nColonne trovate: {list(df.columns)}")
+        return None
+    return df
+
+def normalize_logistics(df):
+    out = pd.DataFrame({
+        "order_id": df["MM_ORDINE_TAGLIA"].astype(str).str.strip(),
+        "order_date": pd.to_datetime(df["TE_DATA"], dayfirst=DATE_DAYFIRST, errors="coerce").dt.date,
+        "price_raw": df["MM_PREZZO_BASE"]
+    })
+    out["price_dec"] = out["price_raw"].apply(decimalize)
+    out["price"] = out["price_dec"].apply(round_money)
+    out = out.dropna(subset=["order_id", "order_date", "price"]).copy()
+    return out[["order_id", "order_date", "price"]]
+
+def to_excel_bytes(df, sheet="dati"):
+    bio = io.BytesIO()
+    with pd.ExcelWriter(bio, engine="xlsxwriter") as xl:
+        df.to_excel(xl, index=False, sheet_name=sheet)
+    bio.seek(0)
+    return bio
+
+# ---- UI ----
+c1, c2 = st.columns(2)
+with c1:
+    f_sup = st.file_uploader("📤 File FORNITORE (.xlsx/.xls) — usa foglio 'Orders'", type=["xlsx", "xls"], key="sup")
+with c2:
+    f_log = st.file_uploader("📥 File LOGISTICA (.xlsx/.xls/.csv)", type=["xlsx", "xls", "csv"], key="log")
+
+run = st.button("▶️ Confronta prezzi", use_container_width=True)
+
+if run:
+    if not f_sup or not f_log:
+        st.warning("Carica entrambi i file.")
+        st.stop()
+
+    # Fornitore
+    df_sup_raw = read_supplier_orders(f_sup)
+    if df_sup_raw is None or df_sup_raw.empty:
+        st.stop()
+    sup_n = normalize_supplier(df_sup_raw)
+
+    # Logistica
+    df_log_raw = read_logistics(f_log)
+    if df_log_raw is None or df_log_raw.empty:
+        st.stop()
+    log_n = normalize_logistics(df_log_raw)
+
+    # Merge su (order_id + order_date)
+    merged = pd.merge(
+        sup_n.rename(columns={"price": "price_supplier"}),
+        log_n.rename(columns={"price": "price_logistics"}),
+        on=["order_id", "order_date"], how="outer", indicator=True
+    )
+
+    only_sup = merged[merged["_merge"] == "left_only"].copy()
+    only_log = merged[merged["_merge"] == "right_only"].copy()
+    both = merged[merged["_merge"] == "both"].copy()
+
+    # Differenze (dopo arrotondamento a 2 decimali)
+    both["price_diff"] = (both["price_supplier"] - both["price_logistics"]).astype(float)
+    diffs = both[both["price_diff"] != 0].copy()
+
+    # Metriche
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Solo fornitore", len(only_sup))
+    m2.metric("Solo logistica", len(only_log))
+    m3.metric("Prezzi diversi", len(diffs))
+
+    st.subheader(f"📄 Prezzi diversi (arrotondati a {DECIMALS} decimali)")
+    st.dataframe(diffs.sort_values(["order_date", "order_id"]), use_container_width=True, height=360)
+
+    st.subheader("⬇️ Download")
+    d1, d2, d3 = st.columns(3)
+    d1.download_button("prezzi_diversi.xlsx", to_excel_bytes(diffs), "prezzi_diversi.xlsx")
+    d2.download_button("solo_fornitore.xlsx", to_excel_bytes(only_sup), "solo_fornitore.xlsx")
+    d3.download_button("solo_logistica.xlsx", to_excel_bytes(only_log), "solo_logistica.xlsx")
+
+    with st.expander("🔍 Diagnostica (rapida)"):
+        st.write("Fornitore:", sup_n.head(5))
+        st.write("Logistica:", log_n.head(5))
