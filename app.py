@@ -7,7 +7,7 @@ import streamlit as st
 st.set_page_config(page_title="Confronto Prezzi Fornitore vs Logistica", layout="wide")
 st.title("💶 Confronto Prezzi Fornitore vs Logistica")
 
-# ---------- utils ----------
+# ---------- Utils ----------
 def decimalize(x):
     if pd.isna(x): return None
     s = str(x).strip().replace(" ", "").replace("’","").replace("'","")
@@ -16,10 +16,8 @@ def decimalize(x):
         s = s.replace(".", "").replace(",", ".")
     elif "," in s:
         s = s.replace(",", ".")
-    try:
-        return Decimal(s)
-    except InvalidOperation:
-        return None
+    try: return Decimal(s)
+    except InvalidOperation: return None
 
 def round_money(d: Decimal, decimals=2):
     if d is None: return None
@@ -39,7 +37,6 @@ def to_excel_bytes(df, sheet="dati"):
 def to_csv_bytes(df):
     return df.to_csv(index=False).encode("utf-8-sig")
 
-# normalizza stringhe intestazioni per match fuzzy
 def _norm(s: str) -> str:
     s = str(s or "").lower().strip()
     s = re.sub(r"[\s\-_]+", " ", s)
@@ -47,48 +44,86 @@ def _norm(s: str) -> str:
     s = re.sub(r"[^a-z0-9 ]", "", s)
     return s
 
-def find_col(df: pd.DataFrame, candidates: list[str], required=True, label=""):
+def find_col(df: pd.DataFrame, candidates, label):
     norm_map = {_norm(c): c for c in df.columns}
+    # match esatto o per substring
     for cand in candidates:
         k = _norm(cand)
-        if k in norm_map:
-            return norm_map[k]
-        # cerca substring
+        if k in norm_map: return norm_map[k]
         for nk, orig in norm_map.items():
-            if k and k in nk:
-                return orig
-    if required:
-        raise KeyError(f"Colonna '{label}' non trovata. Cercate: {candidates}. Trovate: {list(df.columns)}")
-    return None
+            if k and k in nk: return orig
+    raise KeyError(f"Colonna '{label}' non trovata. Cercate: {candidates}. Trovate: {list(df.columns)}")
 
-# ---------- supplier ----------
-def normalize_supplier(uploaded):
+# ---------- Supplier (Orders) con auto-intestazioni ----------
+def read_orders_with_autohdr(uploaded):
     xls = pd.ExcelFile(uploaded)
     if "Orders" not in xls.sheet_names:
-        raise RuntimeError(f"Foglio 'Orders' non trovato. Fogli disponibili: {xls.sheet_names}")
-    df = pd.read_excel(xls, sheet_name="Orders", dtype=str)
+        raise RuntimeError(f"Foglio 'Orders' non trovato. Fogli: {xls.sheet_names}")
+    raw = pd.read_excel(xls, sheet_name="Orders", header=None, dtype=str)
 
-    col_order   = find_col(df, ["Orders Id","Order Id","OrderID","Order ID"], label="Order Id")
-    col_nlmp    = find_col(df, ["Net Local Market Price","Net Local Market Price Total"], label="Net Local Market Price")
-    col_supp    = find_col(df, ["Supplier's Price","Suppliers Price","Supplier Price","Supplier's Price Total"], label="Supplier's Price")
+    # cerca riga che contenga "order id" + almeno uno dei prezzi
+    wants_order = {"order id","orders id","orderid","order id "}
+    wants_price = {
+        "net local market price",
+        "suppliers price","supplier's price","supplier price"
+    }
+
+    hdr_row = None
+    scan_rows = min(300, len(raw))
+    for i in range(scan_rows):
+        row = [ _norm(x) for x in raw.iloc[i].values ]
+        has_order = any(w in row for w in wants_order)
+        has_price = any(w in row for w in wants_price)
+        if has_order and has_price:
+            hdr_row = i
+            break
+    if hdr_row is None:
+        # fallback: prova una riga che contenga solo "order id"
+        for i in range(scan_rows):
+            row = [ _norm(x) for x in raw.iloc[i].values ]
+            if "order id" in row or "orders id" in row or "orderid" in row:
+                hdr_row = i
+                break
+    if hdr_row is None:
+        raise RuntimeError("Impossibile individuare la riga intestazioni nel foglio 'Orders'.")
+
+    df = raw.iloc[hdr_row+1:].copy()
+    df.columns = [str(c) for c in raw.iloc[hdr_row].values]
+    df = df.reset_index(drop=True)
+    return df
+
+def normalize_supplier(uploaded):
+    df = read_orders_with_autohdr(uploaded)
+
+    col_order = find_col(df,
+        ["Order Id","Orders Id","OrderID","Order ID"], "Order Id")
+    col_nlmp = find_col(df,
+        ["Net Local Market Price","Net Local Market Price Total"], "Net Local Market Price")
+    col_supp = find_col(df,
+        ["Supplier's Price","Suppliers Price","Supplier Price","Supplier's Price Total"], "Supplier's Price")
 
     out = pd.DataFrame()
-    out["order_id"] = df[col_order].astype(str).str.replace("^BLL", "", regex=True).str.strip()
+    out["order_id"] = (
+        df[col_order].astype(str)
+        .str.replace("^BLL", "", regex=True)     # rimuove prefisso BLL
+        .str.extract(r"(\d+)$", expand=False)    # tiene solo la parte numerica finale
+        .fillna(df[col_order].astype(str).str.strip())
+    )
     out["nlmp"] = df[col_nlmp].apply(decimalize).apply(round_money)
     out["supplier_price"] = df[col_supp].apply(decimalize).apply(round_money)
     out = out.dropna(subset=["order_id"])
     return out
 
-# ---------- logistics ----------
+# ---------- Logistics (Sheet1) ----------
 def normalize_logistics(uploaded):
     xls = pd.ExcelFile(uploaded)
     if "Sheet1" not in xls.sheet_names:
-        raise RuntimeError(f"Foglio 'Sheet1' non trovato. Fogli disponibili: {xls.sheet_names}")
+        raise RuntimeError(f"Foglio 'Sheet1' non trovato. Fogli: {xls.sheet_names}")
     df = pd.read_excel(xls, sheet_name="Sheet1", dtype=str)
 
-    col_ord = find_col(df, ["TE_NDOC"], label="TE_NDOC")
-    col_base = find_col(df, ["MM_PREZZO_BASE"], label="MM_PREZZO_BASE")
-    col_netto = find_col(df, ["MM_PREZZO_NETTO"], label="MM_PREZZO_NETTO")
+    col_ord   = find_col(df, ["TE_NDOC"], "TE_NDOC")
+    col_base  = find_col(df, ["MM_PREZZO_BASE"], "MM_PREZZO_BASE")
+    col_netto = find_col(df, ["MM_PREZZO_NETTO"], "MM_PREZZO_NETTO")
 
     out = pd.DataFrame()
     out["order_id"] = df[col_ord].astype(str).str.strip()
@@ -119,8 +154,8 @@ if st.button("▶️ Confronta", use_container_width=True):
     only_log = merged[merged["_merge"]=="right_only"].copy()
     both = merged[merged["_merge"]=="both"].copy()
 
-    # differenze con tolleranza su entrambe le coppie di prezzi
-    both["diff_base"] = (both["nlmp"] - both["prezzo_base"]).abs()
+    # differenze con tolleranza
+    both["diff_base"]  = (both["nlmp"] - both["prezzo_base"]).abs()
     both["diff_netto"] = (both["supplier_price"] - both["prezzo_netto"]).abs()
     diffs = both[(both["diff_base"] > tol) | (both["diff_netto"] > tol)].copy()
     simil = both[(both["diff_base"] <= tol) & (both["diff_netto"] <= tol)].copy()
